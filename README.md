@@ -1,6 +1,6 @@
 # Listodo
 
-![Listodo poster: a cheerful checklist hands a task to a coding agent, with the headline “Local tasks. Agent-powered work.”](assets/listodo-poster.png)
+![Listodo poster: monochrome typography beside a minimal task list, with the headline “Local tasks. Agent-powered work.”](assets/listodo-poster.png)
 
 A local desktop task tracker built with **Go, SQLite, React, and shadcn/ui**. The macOS app uses the system’s native WKWebView, with no Electron or hosted backend. The interface uses Geist typography, Lucide icons, a monochrome palette, and a minimal task view.
 
