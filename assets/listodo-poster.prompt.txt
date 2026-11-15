@@ -1,0 +1,17 @@
+Generated with the built-in imagegen tool.
+The reference was an earlier monochrome Listodo poster generated in the same session.
+
+Use case: ads-marketing
+Asset type: final landscape GitHub README project poster, 1536 x 1024.
+Primary request: Redesign the attached Listodo poster to make it substantially more fun, memorable and visually polished. The attached image is the previous design, used only as a reference for the correct product name, factual wording and monochrome identity. You may completely change its layout and illustration.
+Art direction: A witty, premium indie-software launch poster mixing bold Swiss typography with playful black-ink editorial cartoon art. Retain black, white and gray, with a warm near-white paper background. Clean, purposeful composition; flat crisp ink with sparing halftone shading. Joyful and confident, with personality and beautifully drawn expressive shapes.
+Main visual: A charming anthropomorphic checklist card with little cartoon arms and legs is happily handing a task slip to a small friendly terminal-shaped agent helper. The checklist card has three horizontal task rows and a big completed checkmark; its face is expressive and clever. The terminal helper has a dark screen with a simple white >_ prompt and tiny expressive eyes. Together they are getting work done. A couple of finished task cards spring out with oversized checkmarks, accompanied by sparse joyful motion lines and tiny four-point sparkles. Make the two characters and the paper-task interaction the engaging hero illustration. This should feel like a delightful illustration about local tasks and coding agents, with no invented product interface. Integrate the characters into the composition, avoid a diagram or flowchart.
+Composition: Huge legible "Listodo" across the upper portion, with balanced generous margins. The concise two-line headline sits beneath or beside it, and the dynamic character scene fills the main right and lower area with deliberate overlap and asymmetry. Keep the title and headline unobstructed. Use a small clean footer separated by a rule to anchor the composition. The exact wording "Codex + Claude Code" can be a small label beside the terminal character, clearly associated with the agent helper. The footer carries the exact stack wording. No boxed marketing sections.
+Text (verbatim; render only this copy):
+"Listodo"
+"Local tasks."
+"Agent-powered work."
+"Codex + Claude Code"
+"Go / SQLite / React"
+Typography: Geist-like modern grotesk sans serif, heavy title with playful confident scale, lighter headline, small precise supporting text. All wording must be sharp, readable and correctly spelled. Spell Listodo exactly L-i-s-t-o-d-o.
+Constraints: More personality and visual wit than the reference; uncluttered enough to read at GitHub README width. No 3D product render, no mock computer or phone, no photographic imagery, no stock corporate art, no speech bubbles, no third-party logos, no watermarks, no additional text, no fabricated capabilities. Opaque background.
