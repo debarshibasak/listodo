@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
-  Activity,
   ArrowDownToLine,
   ArrowRight,
   CalendarDays,
@@ -21,7 +20,6 @@ import {
   Pause,
   Play,
   Plus,
-  RefreshCw,
   Search,
   Settings2,
   SlidersHorizontal,
@@ -35,13 +33,6 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -77,17 +68,15 @@ import { LoadingScreen } from "@/components/LoadingScreen"
 import { cn } from "@/lib/utils"
 import { parseTaskText } from "@/lib/task-text"
 import { useOperationNotifications } from "@/lib/use-operation-notifications"
+import { useScrollVisibility } from "@/lib/use-scroll-visibility"
 import {
   day,
   emptyTask,
-  isActive,
   isToday,
   overdueDays,
   priority,
-  relativeTime,
   startDate,
   request,
-  type Session,
   type Settings,
   type Snapshot,
   type Status,
@@ -96,14 +85,13 @@ import {
   type Operation,
 } from "@/lib/api"
 
-type Page = "Today" | "All tasks" | "Upcoming" | "Completed" | "Activity" | "View operations" | "Integrations"
+type Page = "Today" | "All tasks" | "Upcoming" | "Completed" | "View operations" | "Integrations"
 const navItems: { name: Page; icon: LucideIcon }[] = [
   { name: "Today", icon: Sun },
   { name: "All tasks", icon: Layers3 },
   { name: "Upcoming", icon: CalendarDays },
   { name: "Completed", icon: CircleCheck },
   { name: "View operations", icon: Terminal },
-  { name: "Activity", icon: Activity },
 ]
 const initialSettings: Settings = {
   harness: "codex",
@@ -161,6 +149,7 @@ function HarnessIcon({ harness }: { harness: string }) {
 }
 
 export default function App() {
+  useScrollVisibility()
   const [data, setData] = useState(initialState)
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState("")
@@ -182,9 +171,7 @@ export default function App() {
   const [operations, setOperations] = useState<Operation[]>([])
   const [operationsError, setOperationsError] = useState("")
   const [selectedOperation, setSelectedOperation] = useState<string | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [syncing, setSyncing] = useState(false)
   const [notification, setNotification] = useState<{ text: string; error?: boolean } | null>(null)
   const [clock, setClock] = useState(Date.now())
   const searchRef = useRef<HTMLInputElement>(null)
@@ -222,7 +209,6 @@ export default function App() {
     async (silent = false) => {
       if (syncingRef.current) return
       syncingRef.current = true
-      setSyncing(true)
       try {
         const result = await request<{ count: number; warnings: string[] | null }>("sync", {})
         await reload()
@@ -236,7 +222,6 @@ export default function App() {
         if (!silent) notify(e instanceof Error ? e.message : String(e), true)
       } finally {
         syncingRef.current = false
-        setSyncing(false)
       }
     },
     [reload, notify],
@@ -325,7 +310,7 @@ export default function App() {
       await reload()
     } catch {
       // The write succeeded: a refresh failure must not cause a duplicate on retry.
-      notify("Task saved. Could not refresh activity; try reloading.", true)
+      notify("Task saved. Could not refresh tasks; try reloading.", true)
     }
   }
   async function updateTask(task: Task) {
@@ -413,7 +398,7 @@ export default function App() {
   const projects = [
     ...new Set(data.tasks.filter((t) => t.project && t.status !== "done").map((t) => t.project)),
   ].sort()
-  const taskPages = !["Activity", "View operations", "Integrations"].includes(page)
+  const taskPages = !["View operations", "Integrations"].includes(page)
   const title = project || page
   const calendarView = page === "Upcoming" && upcomingView === "calendar"
   const scopedTasks = data.tasks.filter((t) => {
@@ -540,7 +525,7 @@ export default function App() {
                 <Search />
                 <Input
                   ref={searchRef}
-                  aria-label="Search tasks or sessions"
+                  aria-label="Search tasks or operations"
                   placeholder="Search…"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
@@ -778,15 +763,6 @@ export default function App() {
                       else notify("This task has been deleted. Its operation history is still available.")
                     }} />
                 )}
-                {page === "Activity" && (
-                  <ActivityView
-                    data={data}
-                    query={query}
-                    onSession={setSession}
-                    syncing={syncing}
-                    onSync={() => sync()}
-                  />
-                )}
                 {page === "Integrations" && (
                   <Integrations
                     data={data}
@@ -808,7 +784,7 @@ export default function App() {
             task={editor}
             onClose={() => {
               setEditor(null)
-              if (editor.id) void reload().catch(() => notify("Task saved. Could not refresh activity; try reloading.", true))
+              if (editor.id) void reload().catch(() => notify("Task saved. Could not refresh tasks; try reloading.", true))
             }}
             onSave={async (task) => {
               if (task.id) {
@@ -836,24 +812,6 @@ export default function App() {
         {runTask && <RunTask task={runTask.task} provider={runTask.provider}
           sessions={data.sessions} operations={operations} onClose={() => setRunTask(null)}
           onStarted={operationStarted} />}
-        {session && (
-          <SessionDetails
-            session={session}
-            tasks={data.tasks}
-            onClose={() => setSession(null)}
-            onSave={saveTask}
-            onCreate={() => {
-              setEditor({
-                ...emptyTask(session.project),
-                directory: session.directory || "",
-                title: session.title,
-                notes: `From ${session.harness} session.\n\n${session.summary}`,
-                sessionIds: [session.id],
-              })
-              setSession(null)
-            }}
-          />
-        )}
         {(notification || runNotifications.finished.length > 0) && <div className="toast-stack">
           {runNotifications.finished.map(operation => <div key={operation.id}
             role={operation.status === "failed" ? "alert" : "status"}
@@ -1064,133 +1022,6 @@ function TaskRow({
   )
 }
 
-function ActivityView({
-  data,
-  query,
-  onSession,
-  onSync,
-  syncing,
-}: {
-  data: Snapshot
-  query: string
-  onSession: (s: Session) => void
-  onSync: () => void
-  syncing: boolean
-}) {
-  const [range, setRange] = useState("today")
-  const sessions = data.sessions.filter(
-    (s) =>
-      (range === "all" ||
-        (range === "today"
-          ? day(new Date(s.updatedAt)) === day()
-          : Date.parse(s.updatedAt) >= Date.now() - 7 * 86400000)) &&
-      (!query ||
-        `${s.title} ${s.project} ${s.harness}`.toLowerCase().includes(query.toLowerCase())),
-  )
-  const groups = [...new Set(sessions.map((s) => s.project || "Personal"))]
-  const linked = sessions.filter((s) => data.tasks.some((t) => t.sessionIds?.includes(s.id))).length
-  return (
-    <>
-      <div className="activity-controls">
-        <Tabs value={range} onValueChange={setRange}>
-          <TabsList>
-            <TabsTrigger value="today">Today</TabsTrigger>
-            <TabsTrigger value="week">Last 7 days</TabsTrigger>
-            <TabsTrigger value="all">All imported</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        <Button variant="outline" disabled={syncing} onClick={onSync}>
-          <RefreshCw className={syncing ? "animate-spin" : ""} />
-          Sync sessions
-        </Button>
-      </div>
-      <div className="activity-stats">
-        <span>
-          <strong>{sessions.length}</strong> Sessions
-        </span>
-        <span>
-          <strong>{linked}</strong> Linked to tasks
-        </span>
-        <span>
-          <strong>{sessions.filter(isActive).length}</strong> Recently active
-        </span>
-      </div>
-      {groups.map((group) => (
-        <section className="activity-group" key={group}>
-          <h2>
-            <Folder />
-            {group}
-            <Badge variant="secondary">
-              {sessions.filter((s) => (s.project || "Personal") === group).length}
-            </Badge>
-          </h2>
-          {sessions
-            .filter((s) => (s.project || "Personal") === group)
-            .map((s) => (
-              <button className="activity-row" key={s.id} onClick={() => onSession(s)}>
-                <HarnessIcon harness={s.harness} />
-                <div>
-                  <h3>{s.title}</h3>
-                  <span>
-                    {s.harness === "claude" ? "Claude Code" : "Codex"}
-                    <i>·</i>
-                    {relativeTime(s.updatedAt)}
-                    {data.tasks.some((t) => t.sessionIds?.includes(s.id)) && (
-                      <>
-                        <i>·</i>
-                        <Link2 className="size-3" />
-                        Linked
-                      </>
-                    )}
-                  </span>
-                </div>
-                <Badge variant="secondary">
-                  {isActive(s) ? "Recently active" : "Idle"}
-                </Badge>
-                <ChevronRight className="size-4 text-muted-foreground" />
-              </button>
-            ))}
-        </section>
-      ))}
-      {!sessions.length && (
-        <div className="activity-empty">
-          <Terminal />
-          <h2>No sessions yet</h2>
-          <p>Sync your local sessions to see recent activity.</p>
-          <Button variant="outline" onClick={onSync} disabled={syncing}>
-            Sync sessions
-            <RefreshCw className={syncing ? "animate-spin" : ""} />
-          </Button>
-        </div>
-      )}
-      {data.events.length > 0 && (
-        <section className="event-history">
-          <h2>Task history</h2>
-          {data.events
-            .filter((e) => !query || e.Title.toLowerCase().includes(query.toLowerCase()))
-            .slice(0, 30)
-            .map((e) => (
-              <div key={e.ID}>
-                <span className="event-dot" />
-                <p>
-                  {e.Title}
-                  <span>
-                    {e.Action === "done"
-                      ? "Completed"
-                      : e.Action === "working"
-                        ? "Started"
-                        : e.Action.charAt(0).toUpperCase() + e.Action.slice(1)}
-                  </span>
-                </p>
-                <time>{relativeTime(e.At)}</time>
-              </div>
-            ))}
-        </section>
-      )}
-    </>
-  )
-}
-
 function Integrations({
   data,
   onSave,
@@ -1315,122 +1146,5 @@ function Integrations({
         {busy && <Loader2 className="animate-spin" />}Save integrations
       </Button>
     </form>
-  )
-}
-
-function SessionDetails({
-  session,
-  tasks,
-  onClose,
-  onSave,
-  onCreate,
-}: {
-  session: Session
-  tasks: Task[]
-  onClose: () => void
-  onSave: (task: Task) => Promise<void>
-  onCreate: () => void
-}) {
-  const [taskId, setTaskId] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState("")
-  const [linked, setLinked] = useState(
-    tasks.filter((t) => t.sessionIds?.includes(session.id)).map((t) => t.id),
-  )
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[640px] max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <div className="flex items-center gap-2 mb-2">
-            <HarnessIcon harness={session.harness} />
-            <Badge variant="secondary">
-              {session.harness === "claude" ? "Claude Code" : "Codex"}
-            </Badge>
-            <span className="text-xs text-muted-foreground">{relativeTime(session.updatedAt)}</span>
-          </div>
-          <DialogTitle className="leading-snug">{session.title}</DialogTitle>
-          <DialogDescription>
-            {session.project || "Personal"} ·{" "}
-            {isActive(session)
-              ? "Recent activity suggests a turn is in progress"
-              : "Idle · no recent turn in progress"}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="session-summary">
-          <h3>Latest assistant summary</h3>
-          <p>{session.summary || "No final assistant summary was found in this transcript."}</p>
-        </div>
-        {session.directory && (
-          <p className="text-xs text-muted-foreground break-all">{session.directory}</p>
-        )}
-        <Separator />
-        <div className="space-y-3">
-          <h3 className="text-sm font-medium">Linked tasks</h3>
-          <p className="text-xs text-muted-foreground">
-            Attach this session as evidence. You decide when a task is done.
-          </p>
-          {linked.length > 0 && (
-            <div className="flex gap-2 flex-wrap">
-              {tasks
-                .filter((t) => linked.includes(t.id))
-                .map((t) => (
-                  <Badge variant="secondary" key={t.id}>
-                    <Link2 className="size-3" />
-                    {t.title}
-                  </Badge>
-                ))}
-            </div>
-          )}
-          <div className="flex gap-2">
-            <Select value={taskId} onValueChange={setTaskId}>
-              <SelectTrigger aria-label="Choose task to link" className="flex-1 min-w-0">
-                <SelectValue placeholder="Choose an existing task" />
-              </SelectTrigger>
-              <SelectContent>
-                {tasks
-                  .filter((t) => !linked.includes(t.id))
-                  .map((t) => (
-                    <SelectItem value={t.id} key={t.id}>
-                      {t.title}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              disabled={!taskId || busy}
-              onClick={async () => {
-                const task = tasks.find((t) => t.id === taskId)
-                if (!task) return
-                setBusy(true)
-                try {
-                  await onSave({
-                    ...task,
-                    sessionIds: [...new Set([...(task.sessionIds || []), session.id])],
-                  })
-                  setLinked((v) => [...v, task.id])
-                  setTaskId("")
-                } catch (e) {
-                  setError(String(e))
-                } finally {
-                  setBusy(false)
-                }
-              }}
-            >
-              {busy ? <Loader2 className="animate-spin" /> : <Link2 />}Link task
-            </Button>
-          </div>
-          <Button variant="ghost" className="w-full" onClick={onCreate}>
-            <Plus />
-            Create a task from this session
-          </Button>
-          {error && (
-            <p role="alert" className="text-xs text-destructive">
-              {error}
-            </p>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
   )
 }

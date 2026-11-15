@@ -106,13 +106,13 @@ test("quick add, search, filters, navigation, backup and responsive layout", asy
   await page.getByRole("textbox", { name: "Quick add task" }).fill("Review the API changes")
   await page.getByRole("textbox", { name: "Quick add task" }).press("Enter")
   await expect(page.getByText("Review the API changes", { exact: true })).toBeVisible()
-  await page.getByRole("textbox", { name: "Search tasks or sessions" }).fill("no matching task")
+  await page.getByRole("textbox", { name: "Search tasks or operations" }).fill("no matching task")
   await expect(page.getByRole("heading", { name: "No matching tasks" })).toBeVisible()
   await page.getByRole("button", { name: "Clear filters" }).click()
   await page.getByRole("tab", { name: "In progress", exact: true }).click()
   await expect(page.getByRole("heading", { name: "No tasks in this view" })).toBeVisible()
   await page.getByRole("button", { name: "Clear filters" }).click()
-  for (const name of ["All tasks", "Upcoming", "Completed", "Activity", "Integrations", "Today"]) {
+  for (const name of ["All tasks", "Upcoming", "Completed", "Integrations", "Today"]) {
     if (name === "Integrations")
       await page.getByRole("button", { name: "Integrations", exact: true }).click()
     else
@@ -200,7 +200,7 @@ test("calendar editor schedules, reschedules and clears dates while preserving t
   await page.getByRole("tab", { name: "Done", exact: true }).click()
   await expect(page.getByRole("button", { name: "Edit Finished plan" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Schedule Plan an existing task" })).toHaveCount(0)
-  await page.getByRole("textbox", { name: "Search tasks or sessions" }).fill("no matching task")
+  await page.getByRole("textbox", { name: "Search tasks or operations" }).fill("no matching task")
   await expect(page.getByRole("button", { name: "Edit Finished plan" })).toHaveCount(0)
 })
 
@@ -330,39 +330,8 @@ async function withSampleSessions(page: Page) {
   })
 }
 
-test("inspect a session and persist its task link without changing task status", async ({
-  page,
-}) => {
-  const task = await api(page, "tasks", {
-    ...emptyTask("Platform"),
-    title: "Review the pagination contract",
-  })
-  await withSampleSessions(page)
-  await page.reload()
-  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Activity" }).click()
-  await page.getByRole("button", { name: /Review the API pagination/ }).click()
-  await expect(page.getByRole("dialog")).toBeVisible()
-  await expect(
-    page.getByText("Reviewed pagination and added coverage for the cursor contract."),
-  ).toBeVisible()
-  await page.getByRole("combobox", { name: "Choose task to link" }).click()
-  await page.getByRole("option", { name: "Review the pagination contract" }).click()
-  await page.getByRole("button", { name: "Link task", exact: true }).click()
-  await expect
-    .poll(
-      async () =>
-        (await api(page, "state")).tasks.find((t: { id: string }) => t.id === task.id).sessionIds,
-    )
-    .toContain("codex:sample")
-  expect(
-    (await api(page, "state")).tasks.find((t: { id: string }) => t.id === task.id).status,
-  ).toBe("todo")
-  await page.getByRole("button", { name: "Create a task from this session" }).click()
-  await expect(page.getByLabel("Task", { exact: true })).toContainText("Reviewed pagination and added coverage for the cursor contract.")
-})
-
 test("capture empty and populated layouts", async ({ page }) => {
-  await expect(page.getByRole("complementary", { name: "Session activity" })).toHaveCount(0)
+  await expect(page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Activity", exact: true })).toHaveCount(0)
   await page.screenshot({ path: "../build/preview-empty.png", fullPage: true })
   const overdue = new Date()
   overdue.setDate(overdue.getDate() - 2)
