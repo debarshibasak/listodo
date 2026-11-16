@@ -282,13 +282,15 @@ func (s *Server) waitOperation(ctx context.Context, run *liveOperation, executio
 	default:
 		op.Status = "succeeded"
 	}
-	if err := s.store.SaveOperation(*op); err != nil {
-		log.Printf("save finished operation: %v", err)
-	}
+	// Finish linking before publishing a terminal status: merging is permitted
+	// once the operation is no longer running, and must include its session.
 	if op.SessionID != "" {
 		if err := s.store.LinkTaskSession(op.TaskID, op.Provider+":"+op.SessionID); err != nil {
 			log.Printf("link operation session: %v", err)
 		}
+	}
+	if err := s.store.SaveOperation(*op); err != nil {
+		log.Printf("save finished operation: %v", err)
 	}
 	finished := *op
 	run.mu.Unlock()

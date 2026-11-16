@@ -31,6 +31,7 @@ func (s *Store) ReorderTasks(ids []string) error {
 	}
 	var tasks []model.Task
 	byID := map[string]model.Task{}
+	before := map[string]string{}
 	for rows.Next() {
 		var raw string
 		var task model.Task
@@ -44,6 +45,7 @@ func (s *Store) ReorderTasks(ids []string) error {
 		}
 		tasks = append(tasks, task)
 		byID[task.ID] = task
+		before[task.ID] = raw
 	}
 	err = rows.Err()
 	rows.Close()
@@ -65,6 +67,7 @@ func (s *Store) ReorderTasks(ids []string) error {
 		return tasks[i].ID < tasks[j].ID
 	})
 	next := 0
+	var changes []taskChange
 	for i, task := range tasks {
 		if selected[task.ID] {
 			task = byID[ids[next]]
@@ -78,6 +81,10 @@ func (s *Store) ReorderTasks(ids []string) error {
 		if _, err := tx.Exec("UPDATE tasks SET data=? WHERE id=?", string(raw), task.ID); err != nil {
 			return err
 		}
+		changes = append(changes, taskChange{ID: task.ID, Before: before[task.ID], After: string(raw)})
+	}
+	if err := recordTaskUndo(tx, "reorder tasks", changes, nil); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

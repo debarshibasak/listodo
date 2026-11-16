@@ -16,6 +16,7 @@ import {
   Link2,
   Loader2,
   LockKeyhole,
+  Merge,
   PanelLeft,
   Pause,
   Play,
@@ -26,6 +27,7 @@ import {
   Sparkles,
   Sun,
   Terminal,
+  Undo2,
   X,
   type LucideIcon,
 } from "lucide-react"
@@ -47,6 +49,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -165,6 +168,12 @@ export default function App() {
   const [draggedTask, setDraggedTask] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null)
   const [reordering, setReordering] = useState(false)
+  const [selectedTasks, setSelectedTasks] = useState<string[]>([])
+  const selectionAnchor = useRef<string | null>(null)
+  const [batchBusy, setBatchBusy] = useState(false)
+  const batchPending = useRef(false)
+  const undoPending = useRef(false)
+  const [undoing, setUndoing] = useState(false)
   const [quick, setQuick] = useState("")
   const [quickBusy, setQuickBusy] = useState(false)
   const [editor, setEditor] = useState<Task | null>(null)
@@ -190,7 +199,7 @@ export default function App() {
       recordOperations(result)
       // Output progress changes updatedAt, but only the detail view displays it.
       setOperations(current => current.length === result.length && current.every((op, i) =>
-        op.id === result[i].id && op.status === result[i].status && op.turn === result[i].turn &&
+        op.id === result[i].id && op.taskId === result[i].taskId && op.status === result[i].status && op.turn === result[i].turn &&
         op.sessionId === result[i].sessionId && op.error === result[i].error,
       ) ? current : result)
       setOperationsError("")
@@ -220,6 +229,24 @@ export default function App() {
     setToday(day())
     return result
   }, [])
+  const undoTasks = useCallback(async () => {
+    if (undoPending.current) return
+    undoPending.current = true
+    setUndoing(true)
+    try {
+      const result = await request<{ label: string }>("tasks/undo", {})
+      setSelectedTasks([])
+      selectionAnchor.current = null
+      notify(`Undid ${result.label}.`)
+      try { await reload(); await refreshOperations() }
+      catch { notify("Change undone. Could not refresh tasks; try reloading.", true) }
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), true)
+    } finally {
+      undoPending.current = false
+      setUndoing(false)
+    }
+  }, [notify, reload, refreshOperations])
   const sync = useCallback(
     async (silent = false) => {
       if (syncingRef.current) return
@@ -273,6 +300,16 @@ export default function App() {
   }, [notification])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null
+      const editing = target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']")
+      if (!e.defaultPrevented && !editing && !editor && !organizer && !runTask) {
+        if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z") {
+          e.preventDefault()
+          if (!e.repeat) void undoTasks()
+          return
+        }
+        if (e.key === "Escape") { setSelectedTasks([]); selectionAnchor.current = null }
+      }
       if (e.metaKey || e.ctrlKey) {
         if (e.key.toLowerCase() === "k" || e.key.toLowerCase() === "f") {
           e.preventDefault()
@@ -286,7 +323,7 @@ export default function App() {
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [project, page, upcomingView, planningDate])
+  }, [project, page, upcomingView, planningDate, editor, organizer, runTask, undoTasks])
 
   function taskDraft() {
     return { ...emptyTask(project), dueDate: page === "Upcoming" && upcomingView === "calendar" ? planningDate : "" }
@@ -351,6 +388,29 @@ export default function App() {
     await request(`tasks/${id}`, undefined, "DELETE")
     await reload()
     notify("Task deleted.")
+  }
+  async function batchTasks(action: "close" | "merge", ids: string[]) {
+    if (batchPending.current || undoPending.current) return
+    batchPending.current = true
+    setBatchBusy(true)
+    try {
+      const result = await request<Task | { ok: boolean }>(`tasks/${action}`, { taskIds: ids })
+      const merged = "id" in result ? result : null
+      setData(current => ({ ...current, tasks: merged
+        ? [...current.tasks.filter(task => !ids.includes(task.id)), merged]
+        : current.tasks.map(task => ids.includes(task.id) ? { ...task, status: "done" } : task),
+      }))
+      setSelectedTasks(merged ? [merged.id] : [])
+      selectionAnchor.current = merged?.id ?? null
+      notify(action === "merge" ? `Merged ${ids.length} tasks. Use ⌘Z / Ctrl+Z to undo.` : `Closed ${ids.length} tasks. Use ⌘Z / Ctrl+Z to undo.`)
+      try { await reload(); if (merged) await refreshOperations() }
+      catch { notify("Tasks changed. Could not refresh tasks; try reloading.", true) }
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), true)
+    } finally {
+      batchPending.current = false
+      setBatchBusy(false)
+    }
   }
   async function reorderTasks(ids: string[]) {
     if (reordering) return
@@ -467,6 +527,42 @@ export default function App() {
     return { scopedTasks, visible, groups }
   }, [data.tasks, project, query, page, calendarView, filter, sort, today])
   const groupNames = ["Needs attention", "In progress", "To do", "Completed"]
+  const displayedIds = groupNames.flatMap(name => (groups[name] || []).map(task => task.id))
+  const displayedIdSet = new Set(displayedIds)
+  const selectedVisible = selectedTasks.filter(id => displayedIdSet.has(id))
+  const selectedSet = new Set(selectedVisible)
+  const selectionCanClose = visible.some(task => selectedSet.has(task.id) && task.status !== "done")
+  const selectionCanMerge = selectedVisible.length >= 2 && !operations.some(op => selectedSet.has(op.taskId) && op.status === "running")
+  useEffect(() => {
+    setSelectedTasks([])
+    selectionAnchor.current = null
+  }, [page, project, query, filter, sort, upcomingView])
+  useEffect(() => {
+    const existing = new Set(data.tasks.map(task => task.id))
+    setSelectedTasks(current => {
+      const next = current.filter(id => existing.has(id))
+      return next.length === current.length ? current : next
+    })
+  }, [data.tasks])
+  function selectTask(id: string, event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) {
+    if (event.shiftKey && selectionAnchor.current && displayedIds.includes(selectionAnchor.current)) {
+      const anchor = displayedIds.indexOf(selectionAnchor.current)
+      const end = displayedIds.indexOf(id)
+      const range = displayedIds.slice(Math.min(anchor, end), Math.max(anchor, end) + 1)
+      // The selection anchor stays first: it is the task a merge will retain.
+      setSelectedTasks([selectionAnchor.current, ...range.filter(value => value !== selectionAnchor.current)])
+    } else {
+      selectionAnchor.current = id
+      setSelectedTasks(current => event.metaKey || event.ctrlKey
+        ? current.includes(id) ? current.filter(value => value !== id) : [...current.filter(value => displayedIdSet.has(value)), id]
+        : [id])
+    }
+  }
+  function contextSelection(id: string) {
+    if (selectedVisible.includes(id)) return
+    setSelectedTasks([id])
+    selectionAnchor.current = id
+  }
 
   if (!loaded) return <LoadingScreen error={loadError} onRetry={() => {
     setLoadError("")
@@ -617,6 +713,7 @@ export default function App() {
                         </TabsList>
                       </Tabs>
                       <div className="task-view-options">
+                      <IconButton label="Undo last task change (⌘Z / Ctrl+Z)" icon={Undo2} onClick={() => void undoTasks()} disabled={undoing || batchBusy} />
                       {page === "Upcoming" && <div className="task-view-toggle" role="group" aria-label="Upcoming view">
                         <Button variant="ghost" size="sm" aria-label="List view" aria-pressed={!calendarView} onClick={() => setUpcomingView("list")}><List /><span>List</span></Button>
                         <Button variant="ghost" size="sm" aria-label="Calendar view" aria-pressed={calendarView} onClick={() => setUpcomingView("calendar")}><CalendarDays /><span>Calendar</span></Button>
@@ -673,6 +770,16 @@ export default function App() {
                         )}
                       </form>
                     )}
+                    {visible.length > 0 && <div className="task-selection-bar">
+                      {selectedVisible.length ? <>
+                        <span role="status">{selectedVisible.length} selected</span>
+                        <Button variant="ghost" size="sm" disabled={batchBusy || undoing || !selectionCanClose}
+                          onClick={() => void batchTasks("close", selectedVisible)}><CircleCheck />Close selected</Button>
+                        <Button variant="ghost" size="sm" disabled={batchBusy || undoing || !selectionCanMerge}
+                          onClick={() => void batchTasks("merge", selectedVisible)}><Merge />Merge selected</Button>
+                        <IconButton label="Clear task selection" icon={X} onClick={() => { setSelectedTasks([]); selectionAnchor.current = null }} />
+                      </> : <span>Shift-click to select tasks · Right-click for actions</span>}
+                    </div>}
                     {visible.length ? (
                       <div className="task-groups" aria-label="Task list" role="region">
                         {groupNames
@@ -696,6 +803,15 @@ export default function App() {
                                   <TaskRow
                                     key={task.id}
                                     task={task}
+                                    selected={selectedSet.has(task.id)}
+                                    onSelect={event => selectTask(task.id, event)}
+                                    onContextSelect={() => contextSelection(task.id)}
+                                    selectionCount={selectedSet.has(task.id) ? selectedVisible.length : 1}
+                                    canClose={selectedSet.has(task.id) ? selectionCanClose : task.status !== "done"}
+                                    canMerge={selectedSet.has(task.id) && selectionCanMerge}
+                                    batchBusy={batchBusy || undoing}
+                                    onCloseSelected={() => void batchTasks("close", selectedVisible.includes(task.id) ? selectedVisible : [task.id])}
+                                    onMergeSelected={() => void batchTasks("merge", selectedVisible)}
                                     onEdit={() => setEditor(task)}
                                     onRun={(provider) => setRunTask({ task, provider })}
                                     running={operations.some(op => op.taskId === task.id && op.status === "running")}
@@ -878,6 +994,15 @@ export default function App() {
 
 function TaskRow({
   task,
+  selected,
+  onSelect,
+  onContextSelect,
+  selectionCount,
+  canClose,
+  canMerge,
+  batchBusy,
+  onCloseSelected,
+  onMergeSelected,
   onEdit,
   onUpdate,
   onDelete,
@@ -894,6 +1019,15 @@ function TaskRow({
   onMove,
 }: {
   task: Task
+  selected: boolean
+  onSelect: (event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => void
+  onContextSelect: () => void
+  selectionCount: number
+  canClose: boolean
+  canMerge: boolean
+  batchBusy: boolean
+  onCloseSelected: () => void
+  onMergeSelected: () => void
   onEdit: () => void
   onUpdate: (task: Task) => Promise<void>
   onDelete: () => void
@@ -926,8 +1060,22 @@ function TaskRow({
     }
   }
   return (
-    <div className={cn("task-row", completed && "completed", dragging && "is-dragging", dropPosition && `drop-${dropPosition}`)}
-      data-task-id={task.id} onDragOver={onDragOver} onDrop={onDrop}>
+    <ContextMenu onOpenChange={open => { if (open) onContextSelect() }}>
+    <ContextMenuTrigger asChild>
+    <div className={cn("task-row", selected && "is-selected", completed && "completed", dragging && "is-dragging", dropPosition && `drop-${dropPosition}`)}
+      data-task-id={task.id} data-selected={selected} onDragOver={onDragOver} onDrop={onDrop}
+      onPointerDownCapture={event => {
+        if (event.button === 0 && (event.shiftKey || event.metaKey || event.ctrlKey)) event.preventDefault()
+      }}
+      onClickCapture={event => {
+        if (event.shiftKey || event.metaKey || event.ctrlKey) {
+          event.preventDefault()
+          event.stopPropagation()
+          event.currentTarget.querySelector<HTMLButtonElement>(".task-info")?.focus({ preventScroll: true })
+          onSelect(event)
+        }
+      }}
+      onClick={event => { if (!(event.target as HTMLElement).closest("button, [role='checkbox']")) onSelect(event) }}>
       <button className="task-drag-handle" aria-label={`Reorder ${task.title}`}
         title="Drag to reorder · Alt + ↑ / ↓" draggable={!reordering} disabled={reordering}
         onDragStart={onDragStart} onDragEnd={onDragEnd}
@@ -944,7 +1092,7 @@ function TaskRow({
         disabled={busy}
         onCheckedChange={(checked) => change(checked ? "done" : "todo")}
       />
-      <button className="task-info" onClick={onEdit}>
+      <button className="task-info" aria-pressed={selected} onClick={event => { onSelect(event); onEdit() }}>
         <span className="task-title">{task.title}</span>
         <span className="task-meta">
           {task.project && (
@@ -1019,7 +1167,7 @@ function TaskRow({
           {task.status === "working" ? "Pause" : "Start"}
         </Button>
       )}
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={open => { if (open) onContextSelect() }}>
         <DropdownMenuTrigger asChild>
           <Button
             aria-label={`Actions for ${task.title}`}
@@ -1031,6 +1179,10 @@ function TaskRow({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          <DropdownMenuLabel>{selectionCount} {selectionCount === 1 ? "task" : "tasks"} selected</DropdownMenuLabel>
+          <DropdownMenuItem onSelect={onCloseSelected} disabled={batchBusy || !canClose}><CircleCheck />Close selected</DropdownMenuItem>
+          <DropdownMenuItem onSelect={onMergeSelected} disabled={batchBusy || !canMerge}><Merge />Merge selected</DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={onEdit}>Edit task</DropdownMenuItem>
           {running && <DropdownMenuItem onSelect={onViewOperation}>View operation</DropdownMenuItem>}
           <DropdownMenuSub>
@@ -1052,6 +1204,14 @@ function TaskRow({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+    </ContextMenuTrigger>
+    <ContextMenuContent onCloseAutoFocus={event => event.preventDefault()}>
+      <ContextMenuLabel>{selectionCount} {selectionCount === 1 ? "task" : "tasks"} selected</ContextMenuLabel>
+      <ContextMenuItem disabled={batchBusy || !canClose} onSelect={onCloseSelected}><CircleCheck />Close selected</ContextMenuItem>
+      <ContextMenuItem disabled={batchBusy || !canMerge} onSelect={onMergeSelected}><Merge />Merge selected</ContextMenuItem>
+      {selectionCount === 1 && <ContextMenuItem onSelect={onEdit}>Edit task</ContextMenuItem>}
+    </ContextMenuContent>
+    </ContextMenu>
   )
 }
 

@@ -16,6 +16,11 @@
 static ListodoDelegate *listodoDelegate;
 
 @implementation ListodoDelegate
+- (void)listodoUndo:(id)sender {
+    // Native menu shortcuts are consumed before WKWebView sends DOM key events.
+    // Give the rich editor/app the shortcut, then fall back to plain-text undo.
+    [self.webview evaluateJavaScript:@"(() => { const target = document.activeElement || document.body; const event = new KeyboardEvent('keydown', {key: 'z', code: 'KeyZ', metaKey: true, bubbles: true, cancelable: true}); if (target.dispatchEvent(event)) document.execCommand('undo'); })()" completionHandler:nil];
+}
 - (void)showWindow {
     NSRect rect = NSMakeRect(0, 0, 1380, 880);
     self.window = [[NSWindow alloc] initWithContentRect:rect
@@ -194,7 +199,7 @@ void listodoRun(const char *url) {
         [menu addItem:appItem];
         NSMenuItem *editItem = [[NSMenuItem alloc] init];
         NSMenu *edit = [[NSMenu alloc] initWithTitle:@"Edit"];
-        [edit addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@"z"];
+        NSMenuItem *undoItem = [edit addItemWithTitle:@"Undo" action:@selector(listodoUndo:) keyEquivalent:@"z"];
         [edit addItem:[NSMenuItem separatorItem]];
         [edit addItemWithTitle:@"Cut" action:@selector(cut:) keyEquivalent:@"x"];
         [edit addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
@@ -204,6 +209,7 @@ void listodoRun(const char *url) {
         [menu addItem:editItem];
         [NSApp setMainMenu:menu];
         listodoDelegate = [[ListodoDelegate alloc] init];
+        undoItem.target = listodoDelegate;
         listodoDelegate.url = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
         if (NSBundle.mainBundle.bundleIdentifier.length) {
             UNUserNotificationCenter.currentNotificationCenter.delegate = listodoDelegate;

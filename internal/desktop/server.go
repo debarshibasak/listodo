@@ -143,6 +143,29 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.respond(w, map[string]bool{"ok": true}, s.store.ReorderTasks(input.TaskIDs))
 	})
+	mux.HandleFunc("POST /api/tasks/close", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			TaskIDs []string `json:"taskIds"`
+		}
+		if !s.decode(w, r, &input) {
+			return
+		}
+		s.respond(w, map[string]bool{"ok": true}, s.store.CloseTasks(input.TaskIDs))
+	})
+	mux.HandleFunc("POST /api/tasks/merge", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			TaskIDs []string `json:"taskIds"`
+		}
+		if !s.decode(w, r, &input) {
+			return
+		}
+		task, err := s.store.MergeTasks(input.TaskIDs)
+		s.respond(w, task, err)
+	})
+	mux.HandleFunc("POST /api/tasks/undo", func(w http.ResponseWriter, r *http.Request) {
+		label, err := s.store.UndoTasks()
+		s.respond(w, map[string]string{"label": label}, err)
+	})
 	mux.HandleFunc("POST /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		var v model.Settings
 		if !s.decode(w, r, &v) {

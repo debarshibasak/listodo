@@ -47,6 +47,7 @@ func Open(dir string) (*Store, error) {
 	CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
 	CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, task_id TEXT NOT NULL, title TEXT NOT NULL, action TEXT NOT NULL, at TEXT NOT NULL);
 	CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+	CREATE TABLE IF NOT EXISTS task_undo (id INTEGER PRIMARY KEY, data TEXT NOT NULL);
 	CREATE UNIQUE INDEX IF NOT EXISTS one_running_operation_per_task ON operations(json_extract(data, '$.taskId')) WHERE json_extract(data, '$.status') = 'running';
 	CREATE INDEX IF NOT EXISTS operations_started_at ON operations(json_extract(data, '$.startedAt') DESC);
 	PRAGMA user_version=1;`)
@@ -132,6 +133,7 @@ func (s *Store) saveTask(t model.Task, edit *TaskEdit) (model.Task, error) {
 	}
 	now := time.Now()
 	action := "created"
+	var before string
 	tx, err := s.db.Begin()
 	if err != nil {
 		return t, err
@@ -150,6 +152,7 @@ func (s *Store) saveTask(t model.Task, edit *TaskEdit) (model.Task, error) {
 		if err := tx.QueryRow("SELECT data FROM tasks WHERE id=?", t.ID).Scan(&raw); err != nil {
 			return t, err
 		}
+		before = raw
 		var old model.Task
 		if err := json.Unmarshal([]byte(raw), &old); err != nil {
 			return t, err
@@ -213,6 +216,10 @@ func (s *Store) saveTask(t model.Task, edit *TaskEdit) (model.Task, error) {
 	if _, err = tx.Exec("INSERT INTO events(task_id,title,action,at) VALUES(?,?,?,?)", t.ID, t.Title, action, now.Format(time.RFC3339Nano)); err != nil {
 		return t, err
 	}
+	label := map[string]string{"created": "create task", "updated": "edit task", "done": "complete task", "working": "start task", "todo": "reopen task"}[action]
+	if err := recordTaskUndo(tx, label, []taskChange{{ID: t.ID, Before: before, After: string(raw)}}, nil); err != nil {
+		return t, err
+	}
 	return t, tx.Commit()
 }
 
@@ -241,6 +248,9 @@ func (s *Store) DeleteTask(id string) error {
 		return err
 	}
 	if _, err := tx.Exec("INSERT INTO events(task_id,title,action,at) VALUES(?,?,?,?)", id, t.Title, "deleted", time.Now().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if err := recordTaskUndo(tx, "delete task", []taskChange{{ID: id, Before: raw}}, nil); err != nil {
 		return err
 	}
 	return tx.Commit()

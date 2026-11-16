@@ -209,6 +209,11 @@ kbd { font-family: inherit; font-weight: 400; }
 .group-count { color: var(--faint-foreground); margin-left: 2px; font-size: 10px; font-weight: 400; }
 .task-row { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--subtle-border); }
 .task-row:hover { background: var(--subtle-background); }
+.task-row.is-selected { background: var(--accent); box-shadow: -6px 0 var(--accent), 6px 0 var(--accent); }
+.task-row.is-selected .task-menu { opacity: 1; }
+.task-selection-bar { display: flex; align-items: center; gap: 8px; min-height: 36px; flex-shrink: 0; color: var(--muted-foreground); font-size: 11px; flex-wrap: wrap; }
+.task-selection-bar > span { margin-right: auto; }
+.task-selection-bar [data-slot="button"] { font-size: 11px; }
 .task-checkbox { border-radius: 3px; width: 15px; height: 15px; border-color: var(--control-border); box-shadow: none; }
 .task-info { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; text-align: left; background: transparent; border: 0; }
 .task-title { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }

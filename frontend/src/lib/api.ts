@@ -71,7 +71,19 @@ export type Draft = {
 export type Match = { taskId: string; sessionId: string; reason: string; suggestedStatus: Status }
 export type Proposal = { summary: string; tasks: Draft[]; matches: Match[] }
 
-export async function request<T>(path: string, body?: unknown, method?: string): Promise<T> {
+let taskWrites: Promise<unknown> = Promise.resolve()
+
+export function request<T>(path: string, body?: unknown, method?: string): Promise<T> {
+  // Undo must follow any task write already in flight, including autosaves.
+  if ((path === "tasks" || path.startsWith("tasks/")) && (method ?? (body === undefined ? "GET" : "POST")) !== "GET") {
+    const pending = taskWrites.then(() => sendRequest<T>(path, body, method))
+    taskWrites = pending.catch(() => {})
+    return pending
+  }
+  return sendRequest<T>(path, body, method)
+}
+
+async function sendRequest<T>(path: string, body?: unknown, method?: string): Promise<T> {
   const token = document.querySelector<HTMLMetaElement>('meta[name="listodo-token"]')?.content ?? ""
   const response = await fetch(`/api/${path}`, {
     method: method ?? (body === undefined ? "GET" : "POST"),
