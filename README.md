@@ -2,7 +2,9 @@
 
 ![Listodo poster: monochrome typography beside a minimal task list, with the headline “Local tasks. Agent-powered work.”](assets/listodo-poster.png)
 
-A local desktop task tracker built with **Go, SQLite, React, and shadcn/ui**. The macOS app uses the system’s native WKWebView, with no Electron or hosted backend. The interface uses Geist typography, Lucide icons, a monochrome palette, and a minimal task view.
+Listodo is a local desktop task tracker that can hand tasks to a coding agent. Capture tasks and checklists in Markdown, schedule them on a calendar, and run any task with **Codex** or **Claude Code** in a project folder you choose. Follow the live output, continue the session with follow-ups, and mark the task done when you have reviewed the result. Everything is stored locally in SQLite, with no account or hosted backend.
+
+Built with **Go, SQLite, React, and shadcn/ui**. The macOS app uses the system’s native WKWebView instead of Electron. The interface uses Geist typography, Lucide icons, a monochrome palette, and a minimal task view.
 
 ## Install
 
