@@ -6,9 +6,9 @@ A local desktop task tracker built with **Go, SQLite, React, and shadcn/ui**. Th
 
 ## Install
 
-**[Download Listodo for macOS (Apple Silicon)](https://github.com/debarshibasak/listodo/releases/latest/download/Listodo-macos-arm64.zip)** · requires macOS 13.3 or later · [all releases](https://github.com/debarshibasak/listodo/releases)
+**[Download Listodo for macOS (Apple Silicon)](https://github.com/debarshibasak/listodo/releases/latest/download/Listodo-macos-arm64.dmg)** · requires macOS 13.3 or later · [.zip](https://github.com/debarshibasak/listodo/releases/latest/download/Listodo-macos-arm64.zip) · [all releases](https://github.com/debarshibasak/listodo/releases)
 
-1. Unzip the download and drag **Listodo.app** into **Applications**.
+1. Open the `.dmg` and drag **Listodo.app** onto the **Applications** shortcut. (With the `.zip`, unzip it and move **Listodo.app** into **Applications**.)
 2. The app is not notarized, so macOS blocks the first launch. Open **System Settings → Privacy & Security** and click **Open Anyway**, or run:
 
    ```sh
