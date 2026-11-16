@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +121,84 @@ func TestAPIWorkflowPersistenceAndAuthorization(t *testing.T) {
 	}
 	if len(snapshot.Tasks) != 0 || len(snapshot.Events) != 4 {
 		t.Fatal("deletion or retained history is incorrect")
+	}
+}
+
+func TestWorkspaceKeepsHistoryOutOfRoutineRefreshes(t *testing.T) {
+	db, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server, err := NewServer(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SaveTask(model.Task{Title: "Keep this task", Status: "todo", Priority: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveSessions([]model.Session{{ID: "codex:one", Project: "Project", Directory: "/work/project", Title: "Session title", Summary: strings.Repeat("Session summary", 1000)}}); err != nil {
+		t.Fatal(err)
+	}
+	response := operationRequest(server, "GET", "/api/workspace", nil)
+	if response.Code != http.StatusOK {
+		t.Fatal(response.Body.String())
+	}
+	var result workspace
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Tasks) != 1 || len(result.Sessions) != 1 || result.Sessions[0].Directory != "/work/project" {
+		t.Fatalf("missing workspace data: %+v", result)
+	}
+	if strings.Contains(response.Body.String(), "Session summary") || strings.Contains(response.Body.String(), "\"events\"") {
+		t.Fatal("workspace includes transcript text or event history")
+	}
+	full := operationRequest(server, "GET", "/api/state", nil)
+	if !strings.Contains(full.Body.String(), "Session summary") || !strings.Contains(full.Body.String(), "\"events\"") {
+		t.Fatal("full history is no longer available")
+	}
+	unauthorized := httptest.NewRecorder()
+	server.Handler().ServeHTTP(unauthorized, httptest.NewRequest("GET", "/api/workspace", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatal("workspace accepted an unauthenticated request")
+	}
+}
+
+func TestSyncSkipsUnchangedTranscriptsAndRetainsImportedHistory(t *testing.T) {
+	db, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":"Imported task"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveSettings(model.Settings{Harness: "codex", CodexEnabled: true, CodexRoot: dir}); err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sync := func(count, updated int) {
+		t.Helper()
+		response := operationRequest(server, "POST", "/api/sync", map[string]any{})
+		var result struct{ Count, Updated int }
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Count != count || result.Updated != updated {
+			t.Fatalf("unexpected sync response: %s", response.Body.String())
+		}
+	}
+	sync(1, 1)
+	sync(1, 0)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	sync(0, 0)
+	if sessions, err := db.Sessions(); err != nil || len(sessions) != 1 || sessions[0].Title != "Imported task" {
+		t.Fatal("skipping or deleting a transcript lost imported history")
 	}
 }
 

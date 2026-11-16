@@ -40,6 +40,12 @@ type Session struct {
 	Messages   int       `json:"messages"`
 }
 
+type SessionFolder struct {
+	ID        string `json:"id"`
+	Project   string `json:"project"`
+	Directory string `json:"directory"`
+}
+
 // Operation is a task execution started by Listodo, separate from imported sessions.
 type Operation struct {
 	ID         string     `json:"id"`

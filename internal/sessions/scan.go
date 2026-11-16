@@ -20,11 +20,30 @@ type Report struct {
 	Sessions []model.Session
 	Warnings []string
 	Files    int
+	Count    int
 }
 type candidate struct {
 	path, harness string
 	modified      time.Time
+	size          int64
 }
+
+// Scanner remembers only file metadata, never transcript contents or summaries.
+// Reuse it for periodic imports; Sessions contains only new or changed sessions.
+// Call Reset if saving an import fails, so the next scan retries those files.
+// A Scanner must not be used concurrently.
+type Scanner struct {
+	files map[string]fingerprint
+}
+
+type fingerprint struct {
+	modified time.Time
+	size     int64
+	id       string
+	recheck  time.Time
+}
+
+func (s *Scanner) Reset() { s.files = nil }
 
 func Expand(path string) string {
 	if path == "~" || strings.HasPrefix(path, "~/") {
@@ -35,6 +54,10 @@ func Expand(path string) string {
 }
 
 func Scan(settings model.Settings, now time.Time) Report {
+	return new(Scanner).Scan(settings, now)
+}
+
+func (s *Scanner) Scan(settings model.Settings, now time.Time) Report {
 	report := Report{Sessions: []model.Session{}}
 	files := []candidate{}
 	roots := []struct {
@@ -75,7 +98,7 @@ func Scan(settings model.Settings, now time.Time) Report {
 			if now.Sub(info.ModTime()) > 14*24*time.Hour {
 				return nil
 			}
-			files = append(files, candidate{path, root.harness, info.ModTime()})
+			files = append(files, candidate{path, root.harness, info.ModTime(), info.Size()})
 			return nil
 		})
 		if err != nil {
@@ -88,19 +111,50 @@ func Scan(settings model.Settings, now time.Time) Report {
 		report.Warnings = append(report.Warnings, "Import limited to the 400 most recently modified transcripts.")
 	}
 	seen := map[string]bool{}
+	// Rebuilding this map also evicts deleted, disabled, old, and displaced files.
+	next := make(map[string]fingerprint, len(files))
 	for _, f := range files {
-		v, err := ParseFile(f.path, f.harness, now)
 		report.Files++
+		key := f.harness + ":" + f.path
+		if cached, ok := s.files[key]; ok && cached.modified.Equal(f.modified) && cached.size == f.size &&
+			(cached.recheck.IsZero() || now.Before(cached.recheck)) {
+			if cached.id != "" && seen[cached.id] {
+				continue
+			}
+			next[key] = cached
+			if cached.id != "" {
+				seen[cached.id] = true
+				report.Count++
+			}
+			continue
+		}
+		v, err := ParseFile(f.path, f.harness, now)
 		if err != nil {
 			report.Warnings = append(report.Warnings, filepath.Base(f.path)+": "+err.Error())
 			continue
 		}
-		if v.Title == "" || seen[v.ID] {
+		cached := fingerprint{modified: f.modified, size: f.size}
+		if v.Title != "" {
+			cached.id = v.ID
+		}
+		if v.IsActive(now) {
+			// An unchanged unfinished turn must still become idle after three minutes.
+			cached.recheck = v.UpdatedAt.Add(3 * time.Minute)
+		}
+		// Only cache the winning file for an ID. If it disappears, a duplicate
+		// must be imported before its fingerprint can be considered saved.
+		if cached.id != "" && seen[cached.id] {
+			continue
+		}
+		next[key] = cached
+		if cached.id == "" {
 			continue
 		}
 		seen[v.ID] = true
+		report.Count++
 		report.Sessions = append(report.Sessions, v)
 	}
+	s.files = next
 	sort.Slice(report.Sessions, func(i, j int) bool { return report.Sessions[i].UpdatedAt.After(report.Sessions[j].UpdatedAt) })
 	return report
 }

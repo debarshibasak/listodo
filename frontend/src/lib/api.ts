@@ -59,6 +59,8 @@ export type Snapshot = {
   events: TaskEvent[]
   database: string
 }
+export type SessionFolder = Pick<Session, "id" | "project" | "directory">
+export type Workspace = Omit<Snapshot, "sessions" | "events"> & { sessions: SessionFolder[] }
 export type Draft = {
   title: string
   notes: string

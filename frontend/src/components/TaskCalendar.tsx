@@ -31,7 +31,11 @@ export function TaskCalendar({ tasks, selectedDate, onSelectDate, onCreate, onEd
   const unscheduled = tasks.filter(task => !task.dueDate && task.status !== "done")
   const byDate = new Map<string, Task[]>()
   for (const task of tasks) {
-    if (task.dueDate) byDate.set(task.dueDate, [...(byDate.get(task.dueDate) || []), task])
+    if (task.dueDate) {
+      const tasksOnDay = byDate.get(task.dueDate)
+      if (tasksOnDay) tasksOnDay.push(task)
+      else byDate.set(task.dueDate, [task])
+    }
   }
   const scheduledCount = tasks.filter(task => task.dueDate.slice(0, 7) === selectedDate.slice(0, 7)).length
 

@@ -48,6 +48,8 @@ Arrow keys and Shift-selection move through the whole document. **Tab / Shift+Ta
 
 The frontend talks to Go through a loopback-only HTTP server on a random port. Each launch creates a fresh API token; every API request must supply it. The existing database format and data folder are unchanged.
 
+The rich-text editor loads when first opened. Routine workspace refreshes load tasks and session folder associations; transcript summaries and event history stay in SQLite until requested by the organizer or export. Run lists load metadata without decoding historical logs. Idle run lists stop polling, and automatic imports and live-output polling pause while the window is hidden, refreshing when it becomes visible again. Agent processes and native completion notifications continue in the background.
+
 ## Running task agents
 
 Task runs use the installed CLIs and the folder you select. Codex uses `exec --json` with the `workspace-write` sandbox and noninteractive approvals; Claude Code uses `-p --output-format stream-json --permission-mode acceptEdits`. Existing CLI permissions still apply, and permission denials appear in the operation output. No permission-bypass flags are enabled. Configure command permissions in the CLI if a task needs tools it cannot run.
@@ -79,7 +81,7 @@ The app checks `PATH`, `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, an
 
 **Importing sessions is local and does not call a model.** Clicking **Prepare suggestions** sends task descriptions and up to 60 of today's imported session excerpts through the selected CLI to its provider. The call uses your existing plan or API billing. Suggestions never change tasks until you apply them.
 
-Default transcript folders are `~/.codex/sessions` (or `$CODEX_HOME/sessions`) and `~/.claude/projects`. Both can be changed or disabled. Auto-sync runs once a minute while the app is open. It pauses while you edit integration settings.
+Default transcript folders are `~/.codex/sessions` (or `$CODEX_HOME/sessions`) and `~/.claude/projects`. Both can be changed or disabled. Auto-sync runs once a minute while the window is visible. It pauses while you edit integration settings. Unchanged files are skipped using a bounded cache of modification times and sizes; transcript contents are not cached in memory. Unchanged imports avoid database writes and UI reloads.
 
 The current adapters support **Codex and Claude Code**. Transcript formats are not public stable APIs, so parsing is best effort. Each scan reads the 400 most recently modified JSONL files from the past 14 days, bounded to the beginning and tail of large files. Previous imports remain in SQLite. Tool outputs and credential files are not included in organizer input. A session marked "Recently active" means a recent unfinished turn was observed; it does not confirm that a process is alive. Session completion is separate from task completion.
 
@@ -89,6 +91,12 @@ The current adapters support **Codex and Claude Code**. Transcript formats are n
 make test
 make build
 make test-ui
+```
+
+Run allocation and timing benchmarks for run history and repeated transcript imports:
+
+```sh
+go test ./internal/desktop ./internal/sessions -run '^$' -bench 'Benchmark(OperationList|Scan)' -benchmem
 ```
 
 Go tests cover restart persistence, completion history, date-based priority, transcript parsing, CLI invocation, suggestion validation, API authorization, export, and task changes. Runner tests use fixture CLI executables to verify prompt delivery, working folders, streaming events, cancellation, and failure handling without making paid model calls. Browser tests exercise the actual shadcn interface: creation, start, completion, reopening, editing, deletion, search, filters, navigation, backup downloads, responsive layout, organizer review, agent launch/stop, operation output, persisted drag order, and fixed scrolling across tabs. Organizer tests use fixtures rather than calling a paid model.

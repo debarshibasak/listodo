@@ -21,7 +21,21 @@ func (s *Store) Task(id string) (model.Task, error) {
 }
 
 func (s *Store) Operations() ([]model.Operation, error) {
-	rows, err := s.db.Query("SELECT data FROM operations ORDER BY json_extract(data, '$.startedAt') DESC")
+	return s.operations(false)
+}
+
+// OperationSummaries removes large fields inside SQLite, before copying rows
+// into Go. Polling history must not allocate for all historical output.
+func (s *Store) OperationSummaries() ([]model.Operation, error) {
+	return s.operations(true)
+}
+
+func (s *Store) operations(summary bool) ([]model.Operation, error) {
+	column := "data"
+	if summary {
+		column = "json_remove(data, '$.output', '$.prompt')"
+	}
+	rows, err := s.db.Query("SELECT " + column + " FROM operations ORDER BY json_extract(data, '$.startedAt') DESC")
 	if err != nil {
 		return nil, err
 	}

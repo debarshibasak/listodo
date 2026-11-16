@@ -48,6 +48,7 @@ func Open(dir string) (*Store, error) {
 	CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, task_id TEXT NOT NULL, title TEXT NOT NULL, action TEXT NOT NULL, at TEXT NOT NULL);
 	CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, data TEXT NOT NULL);
 	CREATE UNIQUE INDEX IF NOT EXISTS one_running_operation_per_task ON operations(json_extract(data, '$.taskId')) WHERE json_extract(data, '$.status') = 'running';
+	CREATE INDEX IF NOT EXISTS operations_started_at ON operations(json_extract(data, '$.startedAt') DESC);
 	PRAGMA user_version=1;`)
 	if err != nil {
 		db.Close()
@@ -266,13 +267,36 @@ func (s *Store) Sessions() ([]model.Session, error) {
 	return result, rows.Err()
 }
 
+// SessionFolders supplies run-folder suggestions without loading transcript text.
+func (s *Store) SessionFolders() ([]model.SessionFolder, error) {
+	rows, err := s.db.Query(`SELECT id, COALESCE(json_extract(data, '$.project'), ''), json_extract(data, '$.directory')
+		FROM sessions WHERE COALESCE(json_extract(data, '$.directory'), '') != ''
+		ORDER BY json_extract(data, '$.updatedAt') DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []model.SessionFolder{}
+	for rows.Next() {
+		var folder model.SessionFolder
+		if err := rows.Scan(&folder.ID, &folder.Project, &folder.Directory); err != nil {
+			return nil, err
+		}
+		result = append(result, folder)
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) SaveSessions(sessions []model.Session) error {
+	if len(sessions) == 0 {
+		return nil
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.Prepare("INSERT INTO sessions(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data")
+	stmt, err := tx.Prepare("INSERT INTO sessions(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE data != excluded.data")
 	if err != nil {
 		return err
 	}

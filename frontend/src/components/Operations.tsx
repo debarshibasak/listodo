@@ -6,6 +6,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { request, relativeTime, type Operation } from "@/lib/api"
 import { agentName } from "@/components/RunTask"
 import { OperationPrompt } from "@/components/OperationPrompt"
+import { usePageVisible } from "@/lib/use-page-visible"
 
 const statusName = { running: "Running", succeeded: "Finished", failed: "Failed", cancelled: "Stopped", interrupted: "Interrupted" }
 
@@ -19,6 +20,7 @@ export function Operations({ operations, error, query, selected, onSelect, onRef
   onTask: (id: string) => void
   onContinued: (operation: Operation) => void
 }) {
+  const pageVisible = usePageVisible()
   const [filter, setFilter] = useState("all")
   const [operation, setOperation] = useState<Operation | null>(null)
   const [detailError, setDetailError] = useState("")
@@ -44,7 +46,7 @@ export function Operations({ operations, error, query, selected, onSelect, onRef
     return () => { stopRequest.current++ }
   }, [selected])
   useEffect(() => {
-    if (!selected) return
+    if (!selected || !pageVisible) return
     let active = true
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
@@ -52,7 +54,9 @@ export function Operations({ operations, error, query, selected, onSelect, onRef
       try {
         const result = await request<Operation>(`operations/${selected}`)
         if (!active) return
-        setOperation(result)
+        setOperation(current => current?.id === result.id && current.updatedAt === result.updatedAt &&
+          current.status === result.status && current.output === result.output && current.sessionId === result.sessionId &&
+          current.turn === result.turn && current.error === result.error ? current : result)
         setPollError("")
         running = result.status === "running"
         if (!running) setStopping(false)
@@ -63,7 +67,7 @@ export function Operations({ operations, error, query, selected, onSelect, onRef
     }
     void poll()
     return () => { active = false; clearTimeout(timer) }
-  }, [selected, stopping, detailVersion])
+  }, [selected, stopping, detailVersion, pageVisible])
   useLayoutEffect(() => {
     const output = outputRef.current
     if (output && followOutput.current) output.scrollTop = output.scrollHeight

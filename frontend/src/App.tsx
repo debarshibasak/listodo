@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -59,7 +59,6 @@ import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { TaskEditor } from "@/components/TaskEditor"
 import { TaskCalendar } from "@/components/TaskCalendar"
 import { Organizer } from "@/components/Organizer"
 import { Operations } from "@/components/Operations"
@@ -69,6 +68,7 @@ import { cn } from "@/lib/utils"
 import { parseTaskText } from "@/lib/task-text"
 import { useOperationNotifications } from "@/lib/use-operation-notifications"
 import { useScrollVisibility } from "@/lib/use-scroll-visibility"
+import { usePageVisible } from "@/lib/use-page-visible"
 import {
   day,
   emptyTask,
@@ -78,12 +78,14 @@ import {
   startDate,
   request,
   type Settings,
-  type Snapshot,
+  type Workspace,
   type Status,
   type Task,
   type AgentProvider,
   type Operation,
 } from "@/lib/api"
+
+const TaskEditor = lazy(() => import("@/components/TaskEditor").then(module => ({ default: module.TaskEditor })))
 
 type Page = "Today" | "All tasks" | "Upcoming" | "Completed" | "View operations" | "Integrations"
 const navItems: { name: Page; icon: LucideIcon }[] = [
@@ -101,10 +103,9 @@ const initialSettings: Settings = {
   claudeEnabled: true,
   autoSync: true,
 }
-const initialState: Snapshot = {
+const initialState: Workspace = {
   tasks: [],
   sessions: [],
-  events: [],
   settings: initialSettings,
   database: "",
 }
@@ -150,6 +151,7 @@ function HarnessIcon({ harness }: { harness: string }) {
 
 export default function App() {
   useScrollVisibility()
+  const pageVisible = usePageVisible()
   const [data, setData] = useState(initialState)
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState("")
@@ -173,36 +175,49 @@ export default function App() {
   const [selectedOperation, setSelectedOperation] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [notification, setNotification] = useState<{ text: string; error?: boolean } | null>(null)
-  const [clock, setClock] = useState(Date.now())
+  const [today, setToday] = useState(() => day())
   const searchRef = useRef<HTMLInputElement>(null)
   const syncingRef = useRef(false)
+  const lastSyncRef = useRef(0)
+  const operationsRequest = useRef<Promise<void> | null>(null)
   const runNotifications = useOperationNotifications()
   const { recordOperations, recordStarted } = runNotifications
 
   const notify = useCallback((text: string, error = false) => setNotification({ text, error }), [])
-  const refreshOperations = useCallback(async () => {
-    try {
-      const result = await request<Operation[]>("operations")
+  const refreshOperations = useCallback(() => {
+    if (operationsRequest.current) return operationsRequest.current
+    const pending = request<Operation[]>("operations").then(result => {
       recordOperations(result)
-      setOperations(result)
+      // Output progress changes updatedAt, but only the detail view displays it.
+      setOperations(current => current.length === result.length && current.every((op, i) =>
+        op.id === result[i].id && op.status === result[i].status && op.turn === result[i].turn &&
+        op.sessionId === result[i].sessionId && op.error === result[i].error,
+      ) ? current : result)
       setOperationsError("")
-    } catch (e) {
+    }).catch(e => {
       setOperationsError(e instanceof Error ? e.message : String(e))
-    }
+    }).finally(() => { operationsRequest.current = null })
+    operationsRequest.current = pending
+    return pending
   }, [recordOperations])
   const hasRunningOperations = operations.some(op => op.status === "running")
   useEffect(() => {
-    void refreshOperations()
-    if (page !== "View operations" && !hasRunningOperations) return
-    const id = window.setInterval(() => void refreshOperations(), 2000)
-    return () => window.clearInterval(id)
-  }, [page, hasRunningOperations, refreshOperations])
+    if (!pageVisible) return
+    let active = true
+    let timer: number | undefined
+    const poll = async () => {
+      await refreshOperations()
+      if (active && hasRunningOperations) timer = window.setTimeout(poll, 2000)
+    }
+    void poll()
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [page, hasRunningOperations, refreshOperations, pageVisible])
   const reload = useCallback(async () => {
-    const result = await request<Snapshot>("state")
+    const result = await request<Workspace>("workspace")
     setData(result)
     setLoaded(true)
     setLoadError("")
-    setClock(Date.now())
+    setToday(day())
     return result
   }, [])
   const sync = useCallback(
@@ -210,8 +225,9 @@ export default function App() {
       if (syncingRef.current) return
       syncingRef.current = true
       try {
-        const result = await request<{ count: number; warnings: string[] | null }>("sync", {})
-        await reload()
+        const result = await request<{ count: number; updated: number; warnings: string[] | null }>("sync", {})
+        if (result.updated) await reload()
+        lastSyncRef.current = Date.now()
         if (!silent)
           notify(
             result.warnings?.length
@@ -231,7 +247,7 @@ export default function App() {
     let active = true
     reload()
       .then((result) => {
-        if (active && result.settings.autoSync) void sync(true)
+        if (active && !document.hidden && result.settings.autoSync) void sync(true)
       })
       .catch((e) => {
         if (active) setLoadError(String(e.message || e))
@@ -241,12 +257,15 @@ export default function App() {
     }
   }, [reload, sync])
   useEffect(() => {
-    const id = window.setInterval(() => {
-      setClock(Date.now())
-      if (loaded && data.settings.autoSync && page !== "Integrations") void sync(true)
-    }, 60000)
+    if (!pageVisible) return
+    const tick = () => {
+      setToday(day())
+      if (loaded && data.settings.autoSync && page !== "Integrations" && Date.now() - lastSyncRef.current >= 60000) void sync(true)
+    }
+    tick()
+    const id = window.setInterval(tick, 60000)
     return () => window.clearInterval(id)
-  }, [loaded, data.settings.autoSync, page, sync])
+  }, [loaded, data.settings.autoSync, page, sync, pageVisible])
   useEffect(() => {
     if (!notification) return
     const id = window.setTimeout(() => setNotification(null), notification.error ? 12000 : 5000)
@@ -280,9 +299,11 @@ export default function App() {
     setSelectedOperation(null)
   }
   function operationStarted(operation: Operation) {
-    recordStarted(operation)
+    // Output is owned by the selected detail view, never the app-wide history.
+    const { output: _output, prompt: _prompt, ...summary } = operation
+    recordStarted(summary)
     setRunTask(null)
-    setOperations(current => [operation, ...current.filter(op => op.id !== operation.id)])
+    setOperations(current => [summary, ...current.filter(op => op.id !== operation.id)])
     navigate("View operations")
     setSelectedOperation(operation.id)
     void reload().catch(() => notify("Agent started. Refresh the task list to see its status."))
@@ -391,49 +412,61 @@ export default function App() {
     }
   }
 
-  const todayTasks = data.tasks.filter(isToday)
-  const remaining = todayTasks.filter((t) => t.status !== "done").length
-  const working = todayTasks.filter((t) => t.status === "working").length
-  const done = todayTasks.filter((t) => t.status === "done").length
-  const projects = [
-    ...new Set(data.tasks.filter((t) => t.project && t.status !== "done").map((t) => t.project)),
-  ].sort()
+  const { remaining, working, done, openCount, projects, projectCounts } = useMemo(() => {
+    let remaining = 0, working = 0, done = 0, openCount = 0
+    const projectCounts = new Map<string, number>()
+    for (const task of data.tasks) {
+      if (task.status !== "done") {
+        openCount++
+        if (task.project) projectCounts.set(task.project, (projectCounts.get(task.project) || 0) + 1)
+      }
+      if (!isToday(task)) continue
+      if (task.status === "done") done++
+      else remaining++
+      if (task.status === "working") working++
+    }
+    return { remaining, working, done, openCount, projectCounts, projects: [...projectCounts.keys()].sort() }
+  }, [data.tasks, today])
   const taskPages = !["View operations", "Integrations"].includes(page)
   const title = project || page
   const calendarView = page === "Upcoming" && upcomingView === "calendar"
-  const scopedTasks = data.tasks.filter((t) => {
-    if (project && t.project !== project) return false
-    if (query && !`${t.title} ${t.notes} ${t.project}`.toLowerCase().includes(query.toLowerCase()))
-      return false
-    if (page === "Today" && !isToday(t)) return false
-    if (page === "Upcoming" && !calendarView && (t.status === "done" || !t.dueDate || t.dueDate <= day()))
-      return false
-    if (page === "Completed" && t.status !== "done") return false
-    return true
-  })
-  const visible = scopedTasks
-    .filter((t) => t.status !== "done" || page === "Completed" || filter === "done")
-    .filter((t) => filter === "all" || t.status === filter)
-    .sort((a, b) => {
-      if ((a.status === "done") !== (b.status === "done")) return a.status === "done" ? 1 : -1
-      if (sort === "manual") return (a.order || 0) - (b.order || 0) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
-      if (sort === "newest") return Date.parse(b.createdAt) - Date.parse(a.createdAt)
-      if (sort === "due") return (a.dueDate || "9999").localeCompare(b.dueDate || "9999")
-      return priority(b) - priority(a) || a.createdAt.localeCompare(b.createdAt)
+  const { scopedTasks, visible, groups } = useMemo(() => {
+    const search = query.toLowerCase()
+    const scopedTasks = data.tasks.filter((t) => {
+      if (project && t.project !== project) return false
+      if (search && !`${t.title} ${t.notes} ${t.project}`.toLowerCase().includes(search))
+        return false
+      if (page === "Today" && !isToday(t)) return false
+      if (page === "Upcoming" && !calendarView && (t.status === "done" || !t.dueDate || t.dueDate <= day()))
+        return false
+      if (page === "Completed" && t.status !== "done") return false
+      return true
     })
+    const visible = scopedTasks
+      .filter((t) => t.status !== "done" || page === "Completed" || filter === "done")
+      .filter((t) => filter === "all" || t.status === filter)
+      .sort((a, b) => {
+        if ((a.status === "done") !== (b.status === "done")) return a.status === "done" ? 1 : -1
+        if (sort === "manual") return (a.order || 0) - (b.order || 0) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
+        if (sort === "newest") return Date.parse(b.createdAt) - Date.parse(a.createdAt)
+        if (sort === "due") return (a.dueDate || "9999").localeCompare(b.dueDate || "9999")
+        return priority(b) - priority(a) || a.createdAt.localeCompare(b.createdAt)
+      })
+    const groups = visible.reduce<Record<string, Task[]>>((all, task) => {
+      const group =
+        task.status === "done"
+          ? "Completed"
+          : overdueDays(task) > 0
+            ? "Needs attention"
+            : task.status === "working"
+              ? "In progress"
+              : "To do"
+      ;(all[group] ||= []).push(task)
+      return all
+    }, {})
+    return { scopedTasks, visible, groups }
+  }, [data.tasks, project, query, page, calendarView, filter, sort, today])
   const groupNames = ["Needs attention", "In progress", "To do", "Completed"]
-  const groups = visible.reduce<Record<string, Task[]>>((all, task) => {
-    const group =
-      task.status === "done"
-        ? "Completed"
-        : overdueDays(task) > 0
-          ? "Needs attention"
-          : task.status === "working"
-            ? "In progress"
-            : "To do"
-    ;(all[group] ||= []).push(task)
-    return all
-  }, {})
 
   if (!loaded) return <LoadingScreen error={loadError} onRetry={() => {
     setLoadError("")
@@ -455,7 +488,7 @@ export default function App() {
                 name === "Today"
                   ? remaining
                   : name === "All tasks"
-                    ? data.tasks.filter((t) => t.status !== "done").length
+                    ? openCount
                     : name === "View operations"
                       ? operations.filter(op => op.status === "running").length || null
                       : null
@@ -484,7 +517,7 @@ export default function App() {
                   <Folder />
                   <span className="truncate">{name}</span>
                   <span className="nav-count">
-                    {data.tasks.filter((t) => t.project === name && t.status !== "done").length}
+                    {projectCounts.get(name)}
                   </span>
                 </Button>
               ))}
@@ -558,12 +591,12 @@ export default function App() {
                   <div>
                     <h1>{title}</h1>
                     {page === "Today" && <p>
-                      {new Date(clock).toLocaleDateString("en-US", {
+                      {new Date(`${today}T12:00:00`).toLocaleDateString("en-US", {
                         weekday: "long", month: "long", day: "numeric",
                       })}
                     </p>}
                   </div>
-                  {page === "Today" && todayTasks.length > 0 && (
+                  {page === "Today" && remaining + done > 0 && (
                     <div className="day-summary">
                       <span>{remaining} open</span><span>{working} in progress</span><span>{done} done</span>
                     </div>
@@ -778,7 +811,7 @@ export default function App() {
 
             </div>
         </div>
-        {editor && (
+        {editor && <Suspense fallback={null}>
           <TaskEditor
             key={editor.id || "new"}
             task={editor}
@@ -800,7 +833,7 @@ export default function App() {
               }
             }}
           />
-        )}
+        </Suspense>}
         {organizer && (
           <Organizer
             provider={data.settings.harness}
@@ -1026,7 +1059,7 @@ function Integrations({
   data,
   onSave,
 }: {
-  data: Snapshot
+  data: Workspace
   onSave: (settings: Settings) => Promise<void>
 }) {
   const [settings, setSettings] = useState(data.settings)
@@ -1115,7 +1148,7 @@ function Integrations({
           <div className="settings-row">
             <div>
               <Label htmlFor="auto-sync">Keep things in sync</Label>
-              <p>Import local sessions every minute while the app is open.</p>
+              <p>Import local sessions every minute while the window is visible.</p>
             </div>
             <Switch
               id="auto-sync"

@@ -38,6 +38,8 @@ type Server struct {
 	runWG          sync.WaitGroup
 	closing        bool
 	notifyFinished func(model.Operation)
+	syncMu         sync.Mutex
+	scanner        sessions.Scanner
 }
 
 type snapshot struct {
@@ -95,6 +97,10 @@ func (s *Server) Handler() http.Handler {
 	s.operationRoutes(mux)
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		v, err := s.snapshot()
+		s.respond(w, v, err)
+	})
+	mux.HandleFunc("GET /api/workspace", func(w http.ResponseWriter, r *http.Request) {
+		v, err := s.workspace()
 		s.respond(w, v, err)
 	})
 	mux.HandleFunc("POST /api/tasks", func(w http.ResponseWriter, r *http.Request) {
@@ -161,13 +167,20 @@ func (s *Server) Handler() http.Handler {
 		s.respond(w, v, s.store.SaveSettings(v))
 	})
 	mux.HandleFunc("POST /api/sync", func(w http.ResponseWriter, r *http.Request) {
+		// Serialize imports so fingerprints are committed together with their data.
+		s.syncMu.Lock()
+		defer s.syncMu.Unlock()
 		settings, err := s.store.Settings()
 		if err != nil {
 			s.respond(w, nil, err)
 			return
 		}
-		report := sessions.Scan(settings, time.Now())
-		s.respond(w, map[string]any{"count": len(report.Sessions), "warnings": report.Warnings}, s.store.SaveSessions(report.Sessions))
+		report := s.scanner.Scan(settings, time.Now())
+		err = s.store.SaveSessions(report.Sessions)
+		if err != nil {
+			s.scanner.Reset()
+		}
+		s.respond(w, map[string]any{"count": report.Count, "updated": len(report.Sessions), "warnings": report.Warnings}, err)
 	})
 	mux.HandleFunc("POST /api/organize", s.organize)
 	mux.HandleFunc("POST /api/organize/cancel", func(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +254,28 @@ func (s *Server) Handler() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// The task UI only needs session folder associations. Full transcript summaries
+// and event history remain available to the organizer and JSON exports.
+type workspace struct {
+	Tasks    []model.Task          `json:"tasks"`
+	Sessions []model.SessionFolder `json:"sessions"`
+	Settings model.Settings        `json:"settings"`
+	Database string                `json:"database"`
+}
+
+func (s *Server) workspace() (workspace, error) {
+	v := workspace{Database: s.store.Path}
+	var err error
+	if v.Tasks, err = s.store.Tasks(); err != nil {
+		return v, err
+	}
+	if v.Sessions, err = s.store.SessionFolders(); err != nil {
+		return v, err
+	}
+	v.Settings, err = s.store.Settings()
+	return v, err
 }
 
 func (s *Server) snapshot() (snapshot, error) {

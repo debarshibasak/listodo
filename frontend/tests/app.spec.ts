@@ -135,6 +135,98 @@ test("quick add, search, filters, navigation, backup and responsive layout", asy
   await expect(page.getByRole("dialog")).toBeVisible()
 })
 
+test("idle views stop polling and the rich editor loads only when opened", async ({ page }) => {
+  let listRequests = 0
+  const editorRequests: string[] = []
+  page.on("request", request => {
+    if (/\/TaskEditor-[^/]+\.js$/.test(request.url())) editorRequests.push(request.url())
+  })
+  await page.route("**/api/operations", route => {
+    listRequests++
+    return route.fulfill({ json: [] })
+  })
+  await page.clock.install()
+  await page.reload()
+  await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible()
+  expect(editorRequests).toHaveLength(0)
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "View operations", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "No operations yet" })).toBeVisible()
+  const idleRequests = listRequests
+  await page.clock.fastForward(10_000)
+  expect(listRequests).toBe(idleRequests)
+  await page.getByRole("button", { name: "New task", exact: true }).click()
+  await expect(page.getByRole("textbox", { name: "Task", exact: true })).toBeVisible()
+  expect(editorRequests).toHaveLength(1)
+})
+
+test("hidden windows pause run polling and refresh completed output on return", async ({ page }) => {
+  let operation: Operation = {
+    id: "visibility-run", taskId: "visibility-task", title: "Background work", provider: "codex",
+    directory: "/projects/test", status: "running", sessionId: "visibility-session", output: "Working…",
+    startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  }
+  let listRequests = 0, detailRequests = 0
+  await page.route("**/api/operations", route => {
+    listRequests++
+    return route.fulfill({ json: [operation] })
+  })
+  await page.route("**/api/operations/visibility-run", route => {
+    detailRequests++
+    return route.fulfill({ json: operation })
+  })
+  await page.clock.install()
+  await page.goto("/#operation=visibility-run")
+  await expect(page.getByLabel("Session output")).toHaveText("Working…")
+  const setHidden = (hidden: boolean) => page.evaluate(hidden => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: hidden })
+    document.dispatchEvent(new Event("visibilitychange"))
+  }, hidden)
+  await setHidden(true)
+  await page.clock.runFor(50)
+  const hiddenRequests = [listRequests, detailRequests]
+  operation = { ...operation, status: "succeeded", output: "Finished while hidden", updatedAt: new Date(Date.now() + 1000).toISOString() }
+  await page.clock.fastForward(180_000)
+  expect([listRequests, detailRequests]).toEqual(hiddenRequests)
+  await setHidden(false)
+  await expect(page.getByLabel("Session output")).toHaveText("Finished while hidden")
+  await expect(page.locator(".toast")).toContainText("Codex run finished: Background work")
+})
+
+test("unchanged automatic imports skip workspace reloads and pause while hidden", async ({ page }) => {
+  let workspaceRequests = 0, imports = 0
+  await page.route("**/api/workspace", async route => {
+    workspaceRequests++
+    const response = await route.fetch()
+    const workspace = await response.json()
+    await route.fulfill({ json: { ...workspace, settings: { ...workspace.settings, autoSync: true } } })
+  })
+  await page.route("**/api/sync", route => {
+    imports++
+    return route.fulfill({ json: { count: 0, updated: 0, warnings: null } })
+  })
+  await page.clock.install()
+  await page.reload()
+  await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible()
+  await expect.poll(() => imports).toBe(1)
+  const initialWorkspaceRequests = workspaceRequests
+  await page.clock.fastForward(60_000)
+  await expect.poll(() => imports).toBe(2)
+  expect(workspaceRequests).toBe(initialWorkspaceRequests)
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true })
+    document.dispatchEvent(new Event("visibilitychange"))
+  })
+  await page.clock.runFor(50)
+  await page.clock.fastForward(180_000)
+  expect(imports).toBe(2)
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: false })
+    document.dispatchEvent(new Event("visibilitychange"))
+  })
+  await expect.poll(() => imports).toBe(3)
+  expect(workspaceRequests).toBe(initialWorkspaceRequests)
+})
+
 test("calendar dates create scheduled tasks and preserve the Upcoming view", async ({ page }) => {
   const planned = new Date()
   planned.setMonth(planned.getMonth() + 1, 12)
@@ -324,7 +416,7 @@ const sampleSessions = () => [
   },
 ]
 async function withSampleSessions(page: Page) {
-  await page.route("**/api/state", async (route) => {
+  await page.route("**/api/workspace", async (route) => {
     const response = await route.fetch()
     await route.fulfill({ json: { ...(await response.json()), sessions: sampleSessions() } })
   })
@@ -550,13 +642,13 @@ test("failed checklist saves can be retried without duplicating saved tasks", as
 })
 
 test("a failed refresh after saving does not duplicate a task", async ({ page }) => {
-  await page.route("**/api/state", (route) => route.fulfill({ status: 503, json: { error: "Unavailable" } }))
+  await page.route("**/api/workspace", (route) => route.fulfill({ status: 503, json: { error: "Unavailable" } }))
   await page.getByRole("button", { name: "New task", exact: true }).click()
   await fillTask(page, "Saved despite refresh failure")
   await page.getByRole("button", { name: "Save task" }).click()
   await expect(page.getByRole("dialog")).not.toBeVisible()
   await expect(page.getByText("Saved despite refresh failure", { exact: true })).toBeVisible()
-  await page.unroute("**/api/state")
+  await page.unroute("**/api/workspace")
   expect((await api(page, "state")).tasks).toHaveLength(1)
 })
 
@@ -637,6 +729,8 @@ test("run completion notifications show each outcome once and open the result", 
   await expect(page.getByLabel("Session output")).toHaveText("Result for success")
   await failed.getByRole("button", { name: "Dismiss notification for Task failure" }).click()
   const previousRequests = listRequests
+  await page.getByRole("button", { name: "All operations", exact: true }).click()
+  await page.getByRole("button", { name: "Refresh operations" }).click()
   await expect.poll(() => listRequests).toBeGreaterThan(previousRequests)
   await expect(page.locator(".toast")).toHaveCount(0)
   // Native notification clicks use this fragment, including after an app launch.
@@ -945,7 +1039,7 @@ test("typing Markdown converts to elements and keyboard navigation crosses block
 test("loading screen animates dithering, respects reduced motion and handles retry", async ({ page }) => {
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
-  await page.route("**/api/state", async route => { await gate; await route.continue() })
+  await page.route("**/api/workspace", async route => { await gate; await route.continue() })
   await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: "light" })
   await page.reload()
   try {
@@ -968,11 +1062,11 @@ test("loading screen animates dithering, respects reduced motion and handles ret
   }
   await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible()
   await expect(page.locator(".startup-screen")).not.toBeVisible()
-  await page.unroute("**/api/state")
-  await page.route("**/api/state", route => route.fulfill({ status: 503, json: { error: "Workspace unavailable" } }))
+  await page.unroute("**/api/workspace")
+  await page.route("**/api/workspace", route => route.fulfill({ status: 503, json: { error: "Workspace unavailable" } }))
   await page.reload()
   await expect(page.getByRole("alert")).toContainText("Workspace unavailable")
-  await page.unroute("**/api/state")
+  await page.unroute("**/api/workspace")
   await page.getByRole("button", { name: "Try again" }).click()
   await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible()
 })

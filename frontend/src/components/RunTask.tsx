@@ -4,14 +4,14 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { request, type Task, type Session, type Operation, type AgentProvider } from "@/lib/api"
+import { request, type Task, type SessionFolder, type Operation, type AgentProvider } from "@/lib/api"
 
 export const agentName = (provider: AgentProvider) => provider === "codex" ? "Codex" : "Claude Code"
 
 export function RunTask({ task, provider, sessions, operations, onClose, onStarted }: {
   task: Task
   provider: AgentProvider
-  sessions: Session[]
+  sessions: SessionFolder[]
   operations: Operation[]
   onClose: () => void
   onStarted: (operation: Operation) => void

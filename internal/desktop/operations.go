@@ -32,12 +32,17 @@ func (run *liveOperation) snapshot() model.Operation {
 }
 
 func (s *Server) recoverOperations() error {
-	operations, err := s.store.Operations()
+	operations, err := s.store.OperationSummaries()
 	if err != nil {
 		return err
 	}
 	for _, op := range operations {
 		if op.Status == "running" && !harness.ProcessAlive(op.OwnerPID) {
+			// Read output only for the interrupted records being updated.
+			op, err := s.store.Operation(op.ID)
+			if err != nil {
+				return err
+			}
 			now := time.Now()
 			op.Status, op.Error = "interrupted", "Listodo closed before this run finished."
 			op.FinishedAt, op.UpdatedAt = &now, now
@@ -51,7 +56,7 @@ func (s *Server) recoverOperations() error {
 
 func (s *Server) operationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/operations", func(w http.ResponseWriter, r *http.Request) {
-		operations, err := s.store.Operations()
+		operations, err := s.store.OperationSummaries()
 		if err != nil {
 			s.respond(w, nil, err)
 			return

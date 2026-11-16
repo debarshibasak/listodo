@@ -150,6 +150,7 @@ func TestOperationRecoveryAndAuthorization(t *testing.T) {
 	server, workspace := operationServer(t, "exit 1\n")
 	task, _ := server.store.SaveTask(model.Task{Title: "Interrupted task", Status: "todo", Priority: 1})
 	op := model.Operation{ID: model.ID(), TaskID: task.ID, Title: task.Title, Directory: workspace, Provider: "codex", Status: "running", OwnerPID: -1, StartedAt: time.Now()}
+	op.Output, op.Prompt = "Output before interruption", "Original instructions"
 	if err := server.store.BeginOperation(op); err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +160,20 @@ func TestOperationRecoveryAndAuthorization(t *testing.T) {
 	stored, _ := server.store.Operation(op.ID)
 	if stored.Status != "interrupted" || stored.FinishedAt == nil {
 		t.Fatal("stale run not recovered")
+	}
+	if stored.Output != op.Output || stored.Prompt != op.Prompt {
+		t.Fatal("recovery lost the full run history")
+	}
+	// Running operations owned by another live window must keep their status.
+	op.ID, op.OwnerPID = model.ID(), os.Getpid()
+	if err := server.store.BeginOperation(op); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.recoverOperations(); err != nil {
+		t.Fatal(err)
+	}
+	if active, err := server.store.Operation(op.ID); err != nil || active.Status != "running" {
+		t.Fatal("recovery interrupted an operation owned by a live process")
 	}
 	for _, path := range []string{"/api/operations", "/api/operations/" + op.ID} {
 		response := httptest.NewRecorder()
