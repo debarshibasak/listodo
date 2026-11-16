@@ -4,6 +4,20 @@
 
 A local desktop task tracker built with **Go, SQLite, React, and shadcn/ui**. The macOS app uses the system’s native WKWebView, with no Electron or hosted backend. The interface uses Geist typography, Lucide icons, a monochrome palette, and a minimal task view.
 
+## Screenshots
+
+**Today** — tasks grouped by status, with priorities, overdue dates, and quick capture.
+
+![Listodo Today view showing overdue, in-progress, and to-do tasks](assets/screenshots/today.png)
+
+**Upcoming** — a monthly calendar for scheduling tasks, with unscheduled work alongside it.
+
+![Listodo Upcoming calendar showing scheduled tasks and the Unscheduled list](assets/screenshots/upcoming.png)
+
+**Task editor** — Markdown notes and interactive checklists, with due date and priority controls.
+
+![Listodo task editor showing a release checklist, due date, and priority controls](assets/screenshots/task-editor.png)
+
 ## Run
 
 Requires Go 1.23+, Node.js 20.19+, npm, and a C compiler (on macOS, install the Xcode Command Line Tools). The native interface requires macOS 13.3+ for its modern WebKit/CSS support. `make run` installs the frontend’s locked dependencies, builds its assets, and opens the native app.
