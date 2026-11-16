@@ -4,6 +4,17 @@
 
 A local desktop task tracker built with **Go, SQLite, React, and shadcn/ui**. The macOS app uses the system’s native WKWebView, with no Electron or hosted backend. The interface uses Geist typography, Lucide icons, a monochrome palette, and a minimal task view.
 
+## Install
+
+**[Download Listodo for macOS (Apple Silicon)](https://github.com/debarshibasak/listodo/releases/latest/download/Listodo-macos-arm64.zip)** · requires macOS 13.3 or later · [all releases](https://github.com/debarshibasak/listodo/releases)
+
+1. Unzip the download and drag **Listodo.app** into **Applications**.
+2. The app is not notarized, so macOS blocks the first launch. Open **System Settings → Privacy & Security** and click **Open Anyway**, or run:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/Listodo.app
+   ```
+
 ## Screenshots
 
 **Today** — tasks grouped by status, with priorities, overdue dates, and quick capture.
